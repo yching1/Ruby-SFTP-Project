@@ -1,0 +1,149 @@
+require 'FileUtils'
+require 'zlib'
+require 'date'
+require 'rubygems'
+require 'net/ssh'
+require 'net/sftp'
+
+
+hostname = "sftp.companyname.net"
+username = "myuser"
+password = "mypassword"
+port = 22
+
+
+
+uid = '1'
+facility = 'X'
+numerator = 'Num1'
+var = 'X2'
+
+#The origdir is used with different forward slash solely for copying over to archive and 
+#to add "vendor" to filenames
+origdir = 'C:/...../*'
+archivedir = 'C:/......./'
+reworkdir = 'C:/....../'
+outdir = 'E:/...../'
+
+mtime = Time.new() - (0 * 60)
+files = Dir.entries(outdir)
+#mtime = Time.new() - (0 * 60)
+for filename in files
+    #puts files
+    #puts new_filename
+
+    if /#{uid}_#{facility}_#{numerator}_[0-9]{8}_[0-9]{8}.txt$/ =~ filename
+
+        file = "#{outdir}\\#{filename}"
+        filebasename = File.basename(filename,".txt")
+        puts "Base name: #{filebasename}"
+        splitname = filebasename.split('_')
+
+        puts "Split date: #{splitname}"
+        puts "First date: #{splitname[3]}"
+        puts "Second date: #{splitname[4]}"
+
+        date1 = DateTime.parse(splitname[3])
+        date2 = DateTime.parse(splitname[4])
+
+        # Testing format
+        formatdate1 = (date1+1).strftime("%Y%m%d")#Add 1 day
+        formatdate2 = (date2+1).strftime("%Y%m%d")#Add 1 day
+		
+        puts "Date1: #{formatdate1}"
+        puts "Date2: #{formatdate2}"
+		
+		puts "split name: #{splitname[4]}"
+		newfile = "#{outdir}\\#{splitname[0]}" + "_" + splitname[1] + "_" + splitname[2] + "_" + formatdate1 + "_" + formatdate2 + ".txt"
+		puts "New filename: #{newfile}" 
+		File.rename file, newfile
+		
+    end
+end
+	
+
+#Section copies the .txt files from origdir to archivedir
+my_dir = Dir["#{origdir}.txt"]
+my_dir.each do |filename|
+	name = File.basename('filename','.txt')[0,4]
+	dest_folder = archivedir
+	FileUtils.cp(filename,dest_folder)
+end
+
+
+#Section opens/reads each file in the outdir directory and replaces commas with pipes, replaces hexidecimals with blanks
+files = Dir.entries(outdir)
+for filename in files
+    #puts files
+    
+    #puts new_filename
+
+    ####### replacing , for | ########
+
+    if /#{uid}_#{facility}_#{numerator}_[0-9]{8}_[0-9]{8}.txt$/ =~ filename
+	#if /351324_vendor_FollowMyHealth_AccessNum_20181021_20181027/ =~ filename
+
+        print "Pass IF"
+        #puts filename
+
+        file = "#{outdir}\\#{filename}"
+
+        data = File.read(file)
+        data2 = data.gsub(/\u0000+/,"") #unicode issue IBM437
+        filtered_data = data2.gsub(",","|")
+        filtered1_data = filtered_data.chars.select(&:ascii_only?).join
+        filtered2_data = filtered1_data.gsub(/^[ ]*/, "")
+        File.open(file, "w") do |f| f.write(filtered2_data)
+        end
+        puts file
+    end
+end
+
+#Section renames all the filenames and add vendor behind the UID
+
+paths = Dir.glob("#{origdir}.txt")
+paths.each do |path|
+    puts "File #{path}"
+    if path =~ /#{uid}_/
+        puts "Find #{uid}"
+        new_path = path.sub(/#{uid}_/, "#{uid}_#{var}_vendor_")
+        puts "New file: #{new_path}"
+        File.rename path, new_path
+    end
+end
+
+
+#Section loops through and copies the files from the original directory into the FTP root dir, and then deletes all files in original directory
+files = Dir.entries(outdir)
+Net::SFTP.start(hostname, username, :password=>password) do |sftp|
+  for filename in files
+     #puts files
+      puts "Browsing files..." 
+      puts "File: #{filename}" 
+     #puts new_filename
+
+####### replacing , for | ########
+
+     if /#{uid}_#{var}_vendor_Cerner_TANUM_[0-9]{8}_[0-9]{8}.txt$/ =~ filename
+     file = "#{outdir}\\#{filename}"
+     puts "SFTPing #{file}"
+     sftp.upload!(file) 
+     puts "SFTP Complete for file #{file}"
+     puts "Cleanup"
+     puts "Deleting #{file}."
+     File.delete(file)
+     puts "Files were deleted." 
+     end
+  end
+#puts "Closing SFTP connection..." 
+#sftp.close()
+puts "SFTP connection closed."
+end
+
+#Section moves the erroneous .txt files from origdir to reworkdir after process is finished
+my_dir = Dir["#{origdir}.txt"]
+my_dir.each do |filename|
+	name = File.basename('filename','.txt')[0,4]
+	dest_folder = reworkdir
+	FileUtils.mv(filename,dest_folder)
+end
